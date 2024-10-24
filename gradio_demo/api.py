@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 import torch
-from tryon_cli import initialize_pipeline, start_tryon
+from cli import initialize_pipeline, start_tryon
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools

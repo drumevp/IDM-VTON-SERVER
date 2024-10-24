@@ -163,8 +163,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     args = apply_net.create_argument_parser().parse_args((
         'show', '../configs/densepose_rcnn_R_50_FPN_s1x.yaml', 
         '../yisol/IDM-VTON/densepose/model_final_162be9.pkl', 'dp_segm', '-v', 
-        
-        '--opts', 'MODEL.DEVICE', 'cpu'
+        '--opts', 'MODEL.DEVICE', 'cuda'
     ))
     pose_img = args.func(args, human_img_arg)
     pose_img = pose_img[:, :, ::-1]
