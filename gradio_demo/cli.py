@@ -237,7 +237,7 @@ def parse_arguments():
     default="",      
     help="Description of the garment (e.g., 'Short Sleeve Round Neck T-shirt')",
     )
-    parser.add_argument("--use_auto_mask", action="store_true", help="Use auto-generated mask")
+    parser.add_argument("--use_auto_mask", action="store_true", default=True, help="Use auto-generated mask")
     parser.add_argument("--use_auto_crop", action="store_true", help="Use auto-crop and resizing")
     parser.add_argument("--denoise_steps", type=int, default=20, help="Number of denoising steps")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
