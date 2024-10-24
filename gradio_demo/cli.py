@@ -162,7 +162,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     
     args = apply_net.create_argument_parser().parse_args((
         'show', '../configs/densepose_rcnn_R_50_FPN_s1x.yaml', 
-        '../ckpt/densepose/model_final_162be9.pkl', 'dp_segm', '-v', 
+        '../yisol/IDM-VTON/densepose/model_final_162be9.pkl', 'dp_segm', '-v', 
         
         '--opts', 'MODEL.DEVICE', 'cpu'
     ))
