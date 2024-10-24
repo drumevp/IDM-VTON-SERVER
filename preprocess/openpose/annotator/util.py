@@ -7,7 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).absolute().parents[3].absolute()
 
-annotator_ckpts_path = os.path.join(PROJECT_ROOT, 'ckpt/openpose/ckpts')
+annotator_ckpts_path = os.path.join(PROJECT_ROOT, 'yisol/IDM-VTON/openpose/ckpts')
 # print(annotator_ckpts_path)
 
 def HWC3(x):
