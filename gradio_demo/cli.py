@@ -48,7 +48,7 @@ def pil_to_binary_mask(pil_image, threshold=0):
 
 print("222222")
 def initialize_pipeline():
-    base_path = "../yisol/IDM-VTON"
+    base_path = "yisol/IDM-VTON"
 
     unet = UNet2DConditionModel.from_pretrained(
         base_path,
