@@ -34,6 +34,8 @@ WIDTH_TO_USE, HEIGHT_TO_USE = 384, 512
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+print("11111")
+
 def pil_to_binary_mask(pil_image, threshold=0):
     np_image = np.array(pil_image)
     grayscale_image = Image.fromarray(np_image).convert("L")
@@ -44,6 +46,7 @@ def pil_to_binary_mask(pil_image, threshold=0):
     return output_mask
 
 
+print("222222")
 def initialize_pipeline():
     base_path = "../yisol/IDM-VTON"
 
@@ -54,6 +57,7 @@ def initialize_pipeline():
     )
     unet.requires_grad_(False)
 
+    print("33333333")
     tokenizer_one = AutoTokenizer.from_pretrained(
         base_path,
         subfolder="tokenizer",
@@ -64,6 +68,8 @@ def initialize_pipeline():
         subfolder="tokenizer_2",
         use_fast=False,
     )
+
+    print("44444444")
     noise_scheduler = DDPMScheduler.from_pretrained(base_path, subfolder="scheduler")
 
     text_encoder_one = CLIPTextModel.from_pretrained(
@@ -81,6 +87,7 @@ def initialize_pipeline():
         subfolder="image_encoder",
         torch_dtype=torch.float16,
     )
+    print("5555555")
     vae = AutoencoderKL.from_pretrained(
         base_path,
         subfolder="vae",
@@ -94,6 +101,7 @@ def initialize_pipeline():
         torch_dtype=torch.float16,
     )
     
+    print("66666666")
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
     
@@ -118,6 +126,8 @@ def initialize_pipeline():
         image_encoder=image_encoder,
         torch_dtype=torch.float16,
     )
+
+    print("77777777")
     pipe.unet_encoder = UNet_Encoder
     pipe.to(device)
 
@@ -126,7 +136,7 @@ def initialize_pipeline():
 def start_tryon(pipe, openpose_model, parsing_model, tensor_transform, 
                human_image_path, garment_image_path, garment_description,
                use_auto_mask, use_auto_crop, denoise_steps, seed, output_path):
-    
+    print("888888888")
     garm_img = Image.open(garment_image_path).convert("RGB").resize((WIDTH_TO_USE, HEIGHT_TO_USE))
     human_img_orig = Image.open(human_image_path).convert("RGB")
     
@@ -144,6 +154,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     else:
         human_img = human_img_orig.resize((WIDTH_TO_USE, HEIGHT_TO_USE))
 
+    print("99999999")
     
     if use_auto_mask:
         keypoints = openpose_model(human_img.resize((384, 512)))
@@ -154,8 +165,12 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
         
         mask = pil_to_binary_mask(human_img_orig.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
     
+    print("1000000")
+    
     mask_gray = (1 - transforms.ToTensor()(mask)) * tensor_transform(human_img)
     mask_gray = to_pil_image((mask_gray + 1.0) / 2.0)
+
+    print("1111111111")
     
     human_img_arg = _apply_exif_orientation(human_img.resize((384, 512)))
     human_img_arg = convert_PIL_to_numpy(human_img_arg, format="BGR")
@@ -168,6 +183,8 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     pose_img = args.func(args, human_img_arg)
     pose_img = pose_img[:, :, ::-1]
     pose_img = Image.fromarray(pose_img).resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+
+    print("1212121212121")
     
     with torch.no_grad():
         if garment_description.strip():  
@@ -179,6 +196,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
 
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
+        print("1331313131313")
         prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pipe.encode_prompt(
             prompt,
             num_images_per_prompt=1,
