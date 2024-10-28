@@ -33,7 +33,7 @@ from torchvision.transforms.functional import to_pil_image
 import apply_net
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 WIDTH_TO_USE, HEIGHT_TO_USE = 384, 512
 
