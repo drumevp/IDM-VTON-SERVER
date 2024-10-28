@@ -2,6 +2,7 @@ import sys
 import os
 import logging
 import psutil
+from pathlib import Path
 import time
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,12 +34,29 @@ from torchvision.transforms.functional import to_pil_image
 import apply_net
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-WIDTH_TO_USE, HEIGHT_TO_USE = 384, 512
+WIDTH_TO_USE, HEIGHT_TO_USE = 768, 1024
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.info(f"Using device: {device}")
+
+PROJECT_ROOT = parent_dir = os.path.abspath(os.path.join(current_dir, '..')) #Path(__file__).absolute().parents[0].absolute()
+sys.path.insert(0, str(PROJECT_ROOT))
+
+def log_memory_usage(step_description):
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    logging.info(f"{step_description} - Memory usage: {mem_info.rss / (1024 ** 2):.2f} MB")
+
+def pil_to_binary_mask(pil_image, threshold=0):
+    np_image = np.array(pil_image)
+    grayscale_image = Image.fromarray(np_image).convert("L")
+    binary_mask = np.array(grayscale_image) > threshold
+    mask = np.zeros(binary_mask.shape, dtype=np.uint8)
+    mask[binary_mask] = 255
+    output_mask = Image.fromarray(mask)
+    return output_mask
 
 def log_memory_usage(step_description):
     process = psutil.Process(os.getpid())
@@ -234,8 +252,8 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     if use_auto_mask:
         logging.info("Generating auto mask...")
         try:
-            keypoints = openpose_model(human_img.resize((384, 512)))
-            model_parse, _ = parsing_model(human_img.resize((384, 512)))
+            keypoints = openpose_model(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
+            model_parse, _ = parsing_model(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
             mask, mask_gray = get_mask_location('hd', "upper_body", model_parse, keypoints)
             mask = mask.resize((WIDTH_TO_USE, HEIGHT_TO_USE))
             logging.info("Auto mask generated successfully.")
@@ -260,12 +278,14 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
 
     logging.info("Preparing pose image...")
     try:
-        human_img_arg = _apply_exif_orientation(human_img.resize((384, 512)))
+        human_img_arg = _apply_exif_orientation(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
         human_img_arg = convert_PIL_to_numpy(human_img_arg, format="BGR")
+
+        densepose_ckpts_path = os.path.join(PROJECT_ROOT, 'yisol/IDM-VTON/densepose/model_final_162be9.pkl')
 
         args = apply_net.create_argument_parser().parse_args((
             'show', '../configs/densepose_rcnn_R_50_FPN_s1x.yaml',
-            '../yisol/IDM-VTON/densepose/model_final_162be9.pkl', 'dp_segm', '-v',
+            densepose_ckpts_path, 'dp_segm', '-v',
             '--opts', 'MODEL.DEVICE', 'cuda'
         ))
         pose_img = args.func(args, human_img_arg)
@@ -363,9 +383,9 @@ def parse_arguments():
         default="",
         help="Description of the garment (e.g., 'Short Sleeve Round Neck T-shirt')",
     )
-    parser.add_argument("--use_auto_mask", action="store_true", default=False, help="Use auto-generated mask")
-    parser.add_argument("--use_auto_crop", action="store_true", help="Use auto-crop and resizing")
-    parser.add_argument("--denoise_steps", type=int, default=20, help="Number of denoising steps")
+    parser.add_argument("--use_auto_mask", action="store_true", default=True, help="Use auto-generated mask")
+    parser.add_argument("--use_auto_crop", action="store_true", default=False, help="Use auto-crop and resizing")
+    parser.add_argument("--denoise_steps", type=int, default=30, help="Number of denoising steps")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--output", type=str, default="output.png", help="Path to save the output image")
     return parser.parse_args()

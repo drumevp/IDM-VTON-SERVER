@@ -51,9 +51,9 @@ async def tryon_endpoint(
     human_image: UploadFile = File(..., description="Human image file (PNG or JPEG)"),
     garment_image: UploadFile = File(..., description="Garment image file (PNG or JPEG)"),
     garment_description: str = Form("", description="Description of the garment (optional)"),
-    use_auto_mask: bool = Form(False, description="Use auto-generated mask"),
+    use_auto_mask: bool = Form(True, description="Use auto-generated mask"),
     use_auto_crop: bool = Form(False, description="Use auto-crop and resizing"),
-    denoise_steps: int = Form(20, description="Number of denoising steps"),
+    denoise_steps: int = Form(30, description="Number of denoising steps"),
     seed: int = Form(42, description="Random seed for reproducibility"),
 ):
     try:
