@@ -5,8 +5,6 @@ import logging
 import tempfile
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import StreamingResponse
-from PIL import Image, UnidentifiedImageError
-import torch
 from cli import initialize_pipeline, start_tryon
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -28,13 +26,13 @@ app = FastAPI(
 )
 
 try:
-    pipe, openpose_model, parsing_model, tensor_transform = initialize_pipeline()
+    pipe, openpose_model, parsing_model, tensor_transform, blip_model, blip_processor = initialize_pipeline()
     logger.info("Pipeline initialized successfully.")
 except Exception as e:
     logger.exception("Failed to initialize the pipeline.")
-    raise e  
+    raise e
 
-executor = ThreadPoolExecutor(max_workers=4)  
+executor = ThreadPoolExecutor(max_workers=4)
 
 async def run_tryon_in_thread(*args, **kwargs):
     """
@@ -46,40 +44,35 @@ async def run_tryon_in_thread(*args, **kwargs):
     await loop.run_in_executor(executor, func)
     logger.debug("start_tryon completed.")
 
-@app.post("/tryon/")
+@app.post("/tryon")
 async def tryon_endpoint(
-    human_image: UploadFile = File(..., description="Human image file (PNG or JPEG)"),
-    garment_image: UploadFile = File(..., description="Garment image file (PNG or JPEG)"),
-    garment_description: str = Form("", description="Description of the garment (optional)"),
-    use_auto_mask: bool = Form(True, description="Use auto-generated mask"),
-    use_auto_crop: bool = Form(False, description="Use auto-crop and resizing"),
-    denoise_steps: int = Form(30, description="Number of denoising steps"),
-    seed: int = Form(42, description="Random seed for reproducibility"),
+    human_image: UploadFile = File(...),
+    garment_image: UploadFile = File(...),
+    garment_description: str = Form(""),
+    use_auto_mask: bool = Form(True),
+    use_auto_crop: bool = Form(True),
+    denoise_steps: int = Form(30),
+    seed: int = Form(42),
+    width: int = Form(768),
+    height: int = Form(1024),
+    guidance_scale: float = Form(2.0),
+    strength: float = Form(1.0),
+    should_use_clip: bool = Form(False),
+    body_part: str = Form("upper_body"),
 ):
     try:
-        logger.info("Received a try-on request.")     
+        logger.info("Received a try-on request.")
 
-        if human_image.content_type not in ["image/png", "image/jpeg"]:
-            logger.error(f"Invalid human image format: {human_image.content_type}")
-            raise HTTPException(status_code=400, detail="Invalid human image format. Only PNG and JPEG are supported.")
-        if garment_image.content_type not in ["image/png", "image/jpeg"]:
-            logger.error(f"Invalid garment image format: {garment_image.content_type}")
-            raise HTTPException(status_code=400, detail="Invalid garment image format. Only PNG and JPEG are supported.")
-
-        human_image_bytes = await human_image.read()
-        garment_image_bytes = await garment_image.read()
- 
         with tempfile.TemporaryDirectory() as tmpdirname:
-            human_img_path = os.path.join(tmpdirname, "human_image.png")
-            garment_img_path = os.path.join(tmpdirname, "garment_image.png")
+            temp_human_file_path = os.path.join(tmpdirname, "human_image.png")
+            temp_garment_file_path = os.path.join(tmpdirname, "garment_image.png")
             output_path = os.path.join(tmpdirname, "output_tryon.png")
-   
-            logger.debug(f"Saving human image to {human_img_path}")
-            with open(human_img_path, "wb") as f:
-                f.write(human_image_bytes)
-            logger.debug(f"Saving garment image to {garment_img_path}")
-            with open(garment_img_path, "wb") as f:
-                f.write(garment_image_bytes)
+
+            with open(temp_human_file_path, "wb") as temp_human_file:
+                temp_human_file.write(await human_image.read())
+
+            with open(temp_garment_file_path, "wb") as temp_garment_file:
+                temp_garment_file.write(await garment_image.read())
 
             logger.info("Running try-on process.")
 
@@ -88,30 +81,34 @@ async def tryon_endpoint(
                 'openpose_model': openpose_model,
                 'parsing_model': parsing_model,
                 'tensor_transform': tensor_transform,
-                'human_image_path': human_img_path,
-                'garment_image_path': garment_img_path,
+                'human_image_path': temp_human_file_path,
+                'garment_image_path': temp_garment_file_path,
                 'garment_description': garment_description,
                 'use_auto_mask': use_auto_mask,
                 'use_auto_crop': use_auto_crop,
                 'denoise_steps': denoise_steps,
                 'seed': seed,
-                'output_path': output_path
+                'output_path': output_path,
+                'width': width,
+                'height': height,
+                'guidance_scale': guidance_scale,
+                'strength': strength,
+                'should_use_clip': should_use_clip,
+                'blip_model': blip_model,
+                'blip_processor': blip_processor,
+                'body_part': body_part,
             }
 
-            tryon_task = asyncio.create_task(run_tryon_in_thread(**tryon_kwargs))
-
-            await tryon_task
+            await run_tryon_in_thread(**tryon_kwargs)
 
             if not os.path.exists(output_path):
                 logger.error("Output image not found.")
                 raise HTTPException(status_code=500, detail="Try-on process failed to generate output image.")
 
-            logger.debug(f"Reading output image from {output_path}")
-            with open(output_path, "rb") as f:
-                output_image = f.read()
-
             logger.info("Try-on process completed successfully.")
             logger.info("Returning the output image.")
+            with open(output_path, "rb") as output_file:
+                output_image = output_file.read()
 
             return StreamingResponse(io.BytesIO(output_image), media_type="image/png")
 
@@ -121,3 +118,6 @@ async def tryon_endpoint(
     except Exception as e:
         logger.exception("An error occurred during the try-on process.")
         raise HTTPException(status_code=500, detail="An internal error occurred. Please try again later.")
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

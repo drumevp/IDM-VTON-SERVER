@@ -22,7 +22,9 @@ from transformers import (
     CLIPVisionModelWithProjection,
     CLIPTextModel,
     CLIPTextModelWithProjection,
-    AutoTokenizer
+    AutoTokenizer,
+    BlipProcessor,
+    BlipForConditionalGeneration
 )
 from diffusers import DDPMScheduler, AutoencoderKL
 import numpy as np
@@ -36,12 +38,10 @@ import apply_net
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-WIDTH_TO_USE, HEIGHT_TO_USE = 768, 1024
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.info(f"Using device: {device}")
 
-PROJECT_ROOT = parent_dir = os.path.abspath(os.path.join(current_dir, '..')) #Path(__file__).absolute().parents[0].absolute()
+PROJECT_ROOT = parent_dir = os.path.abspath(os.path.join(current_dir, '..'))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 def log_memory_usage(step_description):
@@ -56,20 +56,7 @@ def pil_to_binary_mask(pil_image, threshold=0):
     mask = np.zeros(binary_mask.shape, dtype=np.uint8)
     mask[binary_mask] = 255
     output_mask = Image.fromarray(mask)
-    return output_mask
 
-def log_memory_usage(step_description):
-    process = psutil.Process(os.getpid())
-    mem_info = process.memory_info()
-    logging.info(f"{step_description} - Memory usage: {mem_info.rss / (1024 ** 2):.2f} MB")
-
-def pil_to_binary_mask(pil_image, threshold=0):
-    np_image = np.array(pil_image)
-    grayscale_image = Image.fromarray(np_image).convert("L")
-    binary_mask = np.array(grayscale_image) > threshold
-    mask = np.zeros(binary_mask.shape, dtype=np.uint8)
-    mask[binary_mask] = 255
-    output_mask = Image.fromarray(mask)
     return output_mask
 
 def initialize_pipeline():
@@ -180,8 +167,18 @@ def initialize_pipeline():
         sys.exit(1)
     log_memory_usage("After initializing parsing and OpenPose models")
 
+    # Initialize BLIP for image captioning
+    logging.info("Initializing BLIP model for garment description...")
+    try:
+        blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
+        logging.info("BLIP model initialized successfully.")
+    except Exception as e:
+        logging.error(f"Error initializing BLIP model: {e}")
+        sys.exit(1)
+
     # Disable gradient computation for models
-    for model in [UNet_Encoder, image_encoder, vae, unet, text_encoder_one, text_encoder_two]:
+    for model in [UNet_Encoder, image_encoder, vae, unet, text_encoder_one, text_encoder_two, blip_model]:
         model.requires_grad_(False)
 
     tensor_transform = transforms.Compose([
@@ -214,16 +211,35 @@ def initialize_pipeline():
     pipe.to(device)
     logging.info("Pipeline moved to device.")
 
-    return pipe, openpose_model, parsing_model, tensor_transform
+    return pipe, openpose_model, parsing_model, tensor_transform, blip_model, blip_processor
 
-def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
-                human_image_path, garment_image_path, garment_description,
-                use_auto_mask, use_auto_crop, denoise_steps, seed, output_path):
+def start_tryon(
+    pipe,
+    openpose_model,
+    parsing_model,
+    tensor_transform,
+    human_image_path,
+    garment_image_path,
+    garment_description,
+    use_auto_mask,
+    use_auto_crop,
+    denoise_steps,
+    seed,
+    output_path,
+    width,
+    height,
+    guidance_scale,
+    strength,
+    should_use_clip,
+    blip_model,
+    blip_processor,
+    body_part, # upper_body, lower_body, dresses
+):
     logging.info("Starting try-on process...")
     log_memory_usage("Before loading images")
 
     try:
-        garm_img = Image.open(garment_image_path).convert("RGB").resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+        garm_img = Image.open(garment_image_path).convert("RGB").resize((width, height))
         human_img_orig = Image.open(human_image_path).convert("RGB")
         logging.info("Images loaded successfully.")
     except Exception as e:
@@ -232,19 +248,19 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
 
     if use_auto_crop:
         logging.info("Auto-cropping enabled.")
-        width, height = human_img_orig.size
-        target_width = int(min(width, height * (3 / 4)))
-        target_height = int(min(height, width * (4 / 3)))
-        left = (width - target_width) / 2
-        top = (height - target_height) / 2
-        right = (width + target_width) / 2
-        bottom = (height + target_height) / 2
+        width_orig, height_orig = human_img_orig.size
+        target_width = int(min(width_orig, height_orig * (width / height)))
+        target_height = int(min(height_orig, width_orig * (height / width)))
+        left = (width_orig - target_width) / 2
+        top = (height_orig - target_height) / 2
+        right = (width_orig + target_width) / 2
+        bottom = (height_orig + target_height) / 2
         cropped_img = human_img_orig.crop((left, top, right, bottom))
         crop_size = cropped_img.size
-        human_img = cropped_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+        human_img = cropped_img.resize((width, height))
         logging.info(f"Image cropped to size: {crop_size}")
     else:
-        human_img = human_img_orig.resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+        human_img = human_img_orig.resize((width, height))
         logging.info("Auto-cropping disabled.")
 
     log_memory_usage("After processing images")
@@ -252,16 +268,16 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     if use_auto_mask:
         logging.info("Generating auto mask...")
         try:
-            keypoints = openpose_model(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
-            model_parse, _ = parsing_model(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
-            mask, mask_gray = get_mask_location('hd', "upper_body", model_parse, keypoints)
-            mask = mask.resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+            keypoints = openpose_model(human_img.resize((width, height)))
+            model_parse, _ = parsing_model(human_img.resize((width, height)))
+            mask, mask_gray = get_mask_location('hd', body_part, model_parse, keypoints)
+            mask = mask.resize((width, height))
             logging.info("Auto mask generated successfully.")
         except Exception as e:
             logging.error(f"Error generating auto mask: {e}")
             sys.exit(1)
     else:
-        mask = pil_to_binary_mask(human_img_orig.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
+        mask = pil_to_binary_mask(human_img_orig.resize((width, height)))
         logging.info("Using manual mask.")
 
     log_memory_usage("After generating mask")
@@ -278,7 +294,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
 
     logging.info("Preparing pose image...")
     try:
-        human_img_arg = _apply_exif_orientation(human_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)))
+        human_img_arg = _apply_exif_orientation(human_img.resize((width, height)))
         human_img_arg = convert_PIL_to_numpy(human_img_arg, format="BGR")
 
         densepose_ckpts_path = os.path.join(PROJECT_ROOT, 'yisol/IDM-VTON/densepose/model_final_162be9.pkl')
@@ -290,7 +306,7 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
         ))
         pose_img = args.func(args, human_img_arg)
         pose_img = pose_img[:, :, ::-1]
-        pose_img = Image.fromarray(pose_img).resize((WIDTH_TO_USE, HEIGHT_TO_USE))
+        pose_img = Image.fromarray(pose_img).resize((width, height))
         logging.info("Pose image prepared successfully.")
     except Exception as e:
         logging.error(f"Error preparing pose image: {e}")
@@ -301,6 +317,19 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
     logging.info("Starting inference...")
     try:
         with torch.no_grad():
+            if should_use_clip:
+                logging.info("Generating garment description using BLIP...")
+                try:
+                    inputs = blip_processor(garm_img, return_tensors="pt").to(device)
+                    outputs = blip_model.generate(**inputs)
+                    garment_description = blip_processor.decode(outputs[0], skip_special_tokens=True)
+                    logging.info(f"Generated garment description: {garment_description}")
+                except Exception as e:
+                    logging.error(f"Error generating garment description with BLIP: {e}")
+                    sys.exit(1)
+            else:
+                logging.info("Using provided garment description.")
+
             if garment_description.strip():
                 prompt = f"model is wearing {garment_description}"
                 prompt_c = f"a photo of {garment_description}"
@@ -338,16 +367,16 @@ def start_tryon(pipe, openpose_model, parsing_model, tensor_transform,
                 negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device, torch.float16),
                 num_inference_steps=denoise_steps,
                 generator=generator,
-                strength=1.0,
+                strength=strength,
                 pose_img=pose_img_tensor,
                 text_embeds_cloth=prompt_embeds_c.to(device, torch.float16),
                 cloth=garm_tensor,
                 mask_image=mask,
                 image=human_img,
-                height=HEIGHT_TO_USE,
-                width=WIDTH_TO_USE,
-                ip_adapter_image=garm_img.resize((WIDTH_TO_USE, HEIGHT_TO_USE)),
-                guidance_scale=2.0,
+                height=height,
+                width=width,
+                ip_adapter_image=garm_img.resize((width, height)),
+                guidance_scale=guidance_scale,
             )[0]
             logging.info("Inference completed.")
             log_memory_usage("After pipeline inference")
@@ -388,12 +417,19 @@ def parse_arguments():
     parser.add_argument("--denoise_steps", type=int, default=30, help="Number of denoising steps")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--output", type=str, default="output.png", help="Path to save the output image")
+    parser.add_argument("--width", type=int, default=768, help="Width of the output image")
+    parser.add_argument("--height", type=int, default=1024, help="Height of the output image")
+    parser.add_argument("--guidance_scale", type=float, default=2.0, help="Guidance scale for the model")
+    parser.add_argument("--strength", type=float, default=1.0, help="Strength parameter for the model")
+    parser.add_argument("--should_use_clip", action="store_false", default=False, help="Use CLIP to generate garment description")
+    parser.add_argument("--body_part", default="upper_body", help="Set which parts of the body the garment covers. Options: upper_body, lower_body, dresses")
+
     return parser.parse_args()
 
 def main():
     args = parse_arguments()
     log_memory_usage("At script start")
-    pipe, openpose_model, parsing_model, tensor_transform = initialize_pipeline()
+    pipe, openpose_model, parsing_model, tensor_transform, blip_model, blip_processor = initialize_pipeline()
     start_tryon(
         pipe=pipe,
         openpose_model=openpose_model,
@@ -406,7 +442,15 @@ def main():
         use_auto_crop=args.use_auto_crop,
         denoise_steps=args.denoise_steps,
         seed=args.seed,
-        output_path=args.output
+        output_path=args.output,
+        width=args.width,
+        height=args.height,
+        guidance_scale=args.guidance_scale,
+        strength=args.strength,
+        should_use_clip=args.should_use_clip,
+        blip_model=blip_model,
+        blip_processor=blip_processor,
+        body_part=args.body_part,
     )
     log_memory_usage("At script end")
 
