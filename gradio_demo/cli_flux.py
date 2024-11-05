@@ -1,4 +1,5 @@
-## TODO: Must install diffusers===0.25.0 to use
+## TODO: Must install diffusers===0.31.0 to use
+## Needs at least 40GB of RAM
 
 import sys
 import os
@@ -17,8 +18,9 @@ import argparse
 import torch
 from torchvision import transforms
 from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
-from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
-from src.unet_hacked_tryon import UNet2DConditionModel
+# from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
+# from src.unet_hacked_tryon import UNet2DConditionModel
+from diffusers import FluxTransformer2DModel, UNet2DConditionModel
 from transformers import (
     CLIPImageProcessor,
     CLIPVisionModelWithProjection,
@@ -68,12 +70,20 @@ def initialize_pipeline():
     # Log memory usage
     log_memory_usage("Before loading UNet")
 
+    unet_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/transformers"
+    unet_encoder_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/unet_encoder"
+    vae_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/vae"
+    image_encoder_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/image_encoder"
+    text_encoder_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/text_encoder"
+    text_encoder_2_path = "/home/ubuntu/IDM-VTON-SERVER/test-flux/idmvtonflux/text_encoder_2"
+
     start_time = time.time()
     try:
-        unet = UNet2DConditionModel.from_pretrained(
-            base_path,
-            subfolder="unet",
+        unet = FluxTransformer2DModel.from_pretrained(
+            unet_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         unet.requires_grad_(False)
         logging.info("UNet loaded successfully.")
@@ -113,19 +123,22 @@ def initialize_pipeline():
     logging.info("Loading text and image encoders...")
     try:
         text_encoder_one = CLIPTextModel.from_pretrained(
-            base_path,
-            subfolder="text_encoder",
+            text_encoder_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         text_encoder_two = CLIPTextModelWithProjection.from_pretrained(
-            base_path,
-            subfolder="text_encoder_2",
+            text_encoder_2_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-            base_path,
-            subfolder="image_encoder",
+            image_encoder_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         logging.info("Text and image encoders loaded successfully.")
     except Exception as e:
@@ -136,9 +149,10 @@ def initialize_pipeline():
     logging.info("Loading VAE...")
     try:
         vae = AutoencoderKL.from_pretrained(
-            base_path,
-            subfolder="vae",
+            vae_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         logging.info("VAE loaded successfully.")
     except Exception as e:
@@ -148,10 +162,11 @@ def initialize_pipeline():
 
     logging.info("Loading UNet Encoder...")
     try:
-        UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
-            base_path,
-            subfolder="unet_encoder",
+        UNet_Encoder = UNet2DConditionModel.from_pretrained(
+            unet_encoder_path,
             torch_dtype=torch.float16,
+            use_safetensors=True,
+            local_files_only=True,
         )
         logging.info("UNet Encoder loaded successfully.")
     except Exception as e:

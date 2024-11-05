@@ -1,4 +1,5 @@
-## TODO: Must install diffusers===0.25.0 to use
+## TODO: Must install diffusers===0.31.0 to use
+## Needs at least 40GB of RAM
 
 import sys
 import os
@@ -7,7 +8,7 @@ import logging
 import tempfile
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import StreamingResponse
-from cli import initialize_pipeline, start_tryon
+from cli_flux import initialize_pipeline, start_tryon
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
